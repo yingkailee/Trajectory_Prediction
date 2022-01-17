@@ -22,4 +22,4 @@ netconvert --osm-files OSM_FILENAME.osm -o NET_OUTPUT_FILENAME.net.xml
  </time>
 </configuration>
 ```
-6. The simulation can be then run from terminal using the ```shell sumo-gui``` command or by opening the application and selecting the simulation file.
+6. The simulation can be then run from terminal using the ```sumo-gui``` command or by opening the application and selecting the simulation file.
