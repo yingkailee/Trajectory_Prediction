@@ -2,7 +2,7 @@
 2. A network file can be created through the installed netedit application or OpenStreetMap.
 3. For OpenStreetMap, export an area to create a .osm file which can be converted to a network file through
 ```shell
-netconvert --osm-files OSM_FILENAME.osm -o NET_OUTPUT_FILENAME.net.xml
+netconvert --osm-files OSM_FILENAME.osm -o NET_FILENAME.net.xml
 ```
 4. A routes file is necessary to run a simulation. This can be manually done through editing an xml file, or use SUMO's randomTrips.py tool which is located in SUMO directory.
 ```shell
@@ -12,7 +12,7 @@ netconvert --osm-files OSM_FILENAME.osm -o NET_OUTPUT_FILENAME.net.xml
 ```xml
 <configuration>
  <input>
-  <net-file value="NET_OUTPUT_FILENAME.net.xml"/>
+  <net-file value="NET_FILENAME.net.xml"/>
   <route-files value="ROUTES_FILENAME.rou.xml"/>
  </input>
  <time>
