@@ -1,47 +1,68 @@
 import os
 import sys
-import optparse
+import random
+import pickle
 
-if 'SUMO_HOME' in os.environ:
-    tools = os.path.join(os.environ['SUMO_HOME'], 'tools')
-    sys.path.append(tools)
-else:
-    sys.exit("please declare environment variable 'SUMO_HOME'")
+def append_files(data_file, file1):
+	file = open(file1, 'rb')
+	pickle.dump(pickle.load(file), data_file)
 
-from sumolib import checkBinary
-import traci
+def main():
+	lowerBound = 80
+	upperBound = 100
 
-def get_options():
-    opt_parser = optparse.OptionParser()
-    opt_parser.add_option("--nogui", action="store_true",
-                         default=False, help="run the commandline version of sumo")
-    options, args = opt_parser.parse_args()
-    return options
+	"""
+	# Create one file for different X (pickle file)
+	# Store the removed vehicle's ID as well
+	# Change the map
+	# Function to read info from pickle file
+	Have one pickle file in the end
+	# of X
+	Y_gc
+	Y0
+	Y1
+	Y_gc
+	Y0
+	Y1
+	""" 
 
-# JUST EDIT THE CODE INSIDE THIS METHOD FOR MOST OF YOUR PURPOSES NOW (unless you're sure)
-# SEE TRACI SUMO FOR MORE METHODS AND POSSIBLE TWEAKS TO YOUR SIMULATION
-# TO USE YOUR OWN SIMULATION FILE, CHANGE 'test.sumocfg' AT THE BOTTOM OF
-#   THIS FILE TO YOUR OWN '.sumocfg' FILE
-def run():
-    step = 0;
-    while traci.simulation.getMinExpectedNumber() > 0: # when vehicles are gone
-        step += 1
-        traci.simulationStep()
+	X = 2 # Number of simulations with different initial conditions (1000)
+	Y = 3 # Number of times we remove one random vehicle from the same simulation (one additional ground truth)
+	cmd_seahorse = 'python seahorse.py '
+	network = ' -n intersection1.net.xml'
+	route = ' -r intersection1.rou.xml'
 
-        if step == 50:
-             traci.vehicle.setSpeed("1", 0)
+	data_file = open('pickle.pkl','wb')
 
-    traci.close()
-    sys.stdout.flush()
+	for i in range(X):
+		n = random.randint(lowerBound, upperBound)
+		commandy = 'python $HOME/Downloads/sumo/tools/randomTrips.py'
+		commandy += network + route + ' -e'
+		commandy += str(n)
+		commandy += ' --random'
+		os.system(commandy)
+		print("Number:", i)
+		for j in range(Y):
+			if j == 0:
+				os.system(cmd_seahorse + '0')
+			else:
+				os.system(cmd_seahorse + '1')
+			append_files(data_file, 'picklesub.pkl')
+
+	
+	file = open('pickle.pkl', 'rb')
+	count = 0
+	try:
+		while True:
+			obj = pickle.load(file)
+			print(obj)
+			count = count + 1
+	except EOFError:
+		print('End of File')
+		print(count)
+	file.close()
+
+
 
 if __name__ == "__main__":
-    options = get_options()
-
-    if options.nogui:
-        sumoBinary = checkBinary('sumo')
-    else:
-        sumoBinary = checkBinary('sumo-gui')
-
-    traci.start([sumoBinary, "-c", "test.sumocfg",
-                             "--tripinfo-output", "tripinfo.xml"])
-    run()
+	main()
