@@ -169,7 +169,7 @@ def main():
 				for car in original_sim:
 					print(len(original_sim[car]))
 
-
+				#print(original_sim)
 			else:
 				run_result = run(1, removal_time)
 				removed_sim = run_result[0]
