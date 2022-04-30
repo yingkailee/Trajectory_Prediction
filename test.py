@@ -26,10 +26,11 @@ def append_files(data_file, file1):
 	file = open(file1, 'rb')
 	pickle.dump(pickle.load(file), data_file)
 
-def run(mode, removal_time = 70, random_vehicle_ID = 0):
+def run(mode, removal_time = 300, random_vehicle_ID = 0):
 	step = 0
 	vehicle_pos = {}
 	snapshot = []
+	first_vehicle = 'a'
 
 	#while traci.simulation.getMinExpectedNumber() > 0:
 	while step <= 1000:
@@ -38,6 +39,10 @@ def run(mode, removal_time = 70, random_vehicle_ID = 0):
 
 		if (step % 1) == 0:
 			vehicleID = traci.vehicle.getIDList()
+			if len(vehicleID) > 0 and first_vehicle == 'a':
+				first_vehicle = vehicleID[0]
+			if len(vehicleID) > 0 and first_vehicle != 'a' and vehicleID[0] != first_vehicle and len(snapshot) == 0:
+				snapshot = vehicleID
 
 			for veh_id in vehicleID:
 				if veh_id in vehicle_pos:
@@ -45,53 +50,18 @@ def run(mode, removal_time = 70, random_vehicle_ID = 0):
 				else: 
 					vehicle_pos[veh_id] = [[step, traci.vehicle.getPosition(veh_id)]]
 
-			if step == 300:
-				snapshot = vehicleID
-
 		if mode == 1:
 			if step == removal_time:
-				#random_vehicle_ID = random.choice(vehicleID)
+				snapshot = vehicleID
+				random_vehicle_ID = random.choice(vehicleID)
 				traci.vehicle.remove(random_vehicle_ID)
 				sys.stdout.flush()
 
-
-			
-
-	#if mode == 1:
-		#remove_dict_val(vehicle_pos)
-	#print(step)
 	traci.close()
 	sys.stdout.flush()
 
 	return vehicle_pos, random_vehicle_ID, snapshot
 
-"""
-simulation of 5 cars {1, 2, 3, 4, 5}
-    [pickle] dict of locations, remove locations after rm_time (not with original dict)
-    random 3 cars to remove {2,3,4}
-        car removed: 2
-        every other car being examined
-        {1,3,4,5}
-
-        remove car if doesn't exist from [rm_time - timesteps, rm_time + timesteps]
-
-        new vector of cars being examined
-        {1,3}
-        corresponding to each is a vector of ADE of old(a) vs new(b) trajectory}
-        {1a ADE 1b, 3a ADE 3b}
-        
-        [pickle] 2, {1,3}, {1a ADE 1b, 3a ADE 3b}
-"""
-
-"""
-Pickle file
-dict of locations before time step
-    // [removed car, cars to check, ades of cars being checked]
-    [2, {1,3}, {1a ADE 1b, 3a ADE 3b}]
-    [3, {1,2}, {1a ADE 1b, 2a ADE 2b}]
-    [4, {1,2,3}, {1a ADE 1b, 2a ADE 2b, 3a ADE 3b}]
-repeat?
-"""
 
 def ADE(traj1, traj2):
 	count = 0
@@ -128,16 +98,7 @@ def ADE(traj1, traj2):
 		return 0.0
 	return sum_disp / count
 
-# just make sure there's cars with full history of time steps
-
-# 1 pickle file
-# 2 diff random simulations, 2 diff cars removed each
-
-# share code on how to extract pickle file again
-
 def main():
-	#data_file = open('pick.pkl', 'wb')
-
 	sims = 2
 	times_removal = 2
 
@@ -157,6 +118,7 @@ def main():
 		removal_time = 300
 		snapshot = []
 		removal_veh = 0
+		first_end_step = 0
 
 		for j in range(times_removal + 1):
 			traci.start([sumoBinary, "-c", "first.sumocfg", "--tripinfo-output", "tripinfo.xml"])
@@ -165,7 +127,7 @@ def main():
 				run_result = run(0)
 				original_sim = run_result[0]
 				snapshot = run_result[2]
-				
+				print(snapshot)
 				ind = 0
 
 				dict_veh.clear()
@@ -174,21 +136,22 @@ def main():
 					if(path[0][0] < removal_time - 20 and path[len(path)-1][0] > removal_time + 20):
 						dict_veh.append(snapshot[ind])
 					ind += 1
+				pickle.dump(original_sim, data_file)
+				first_vehicle = snapshot[0]
+				if len(snapshot) < 3:
+					print('simulation failure, try again')
+					return
+				first_vehicle_end_step = original_sim[first_vehicle][len(original_sim[first_vehicle]) - 1][0]
+				removal_time = first_vehicle_end_step
 
-				copy_sim = copy.deepcopy(original_sim)
-				for key in copy_sim:
-					i = len(copy_sim[key]) - 1
-					while i >= 0:
-						if copy_sim[key][i][0] >= removal_time:
-							del copy_sim[key][i]  
-						i = i - 1
-				pickle.dump(copy_sim, data_file)
 			else:
-				run_result = run(1, removal_time, dict_veh[j])
+				if first_vehicle_end_step < 750:
+					removal_time = random.randint(first_vehicle_end_step, first_vehicle_end_step + 200)
+				#dict_veh = snapshot
+				run_result = run(1, removal_time)
 				removed_sim = run_result[0]
 				removed_veh = run_result[1]
-
-				#sub = dict_veh[len(dict_veh) - 1]
+				snapshot = run_result[2]
 
 				uncopy_sim1 = copy.deepcopy(original_sim)
 				for key in uncopy_sim1:
@@ -205,24 +168,18 @@ def main():
 						if uncopy_sim2[key][i][0] < removal_time:
 							del uncopy_sim2[key][i]  
 						i = i - 1
-
+				dict_veh = []
+				for i in snapshot:
+					dict_veh.append(i)
 				veh_ADE = []
 				for veh in dict_veh:
 					new_ADE = ADE(uncopy_sim1[veh], uncopy_sim2[veh])
 					veh_ADE.append(new_ADE)
 
-				removals = [removed_veh, dict_veh, veh_ADE]
+				removals = [removal_time, removed_veh, dict_veh, veh_ADE]
 				pickle.dump(removals, data_file)
 
 	data_file.close()
-
-	#	data_file = open('pick.pkl', 'rb')
-	#	orig = pickle.load(data_file)
-	#	remov = pickle.load(data_file)
-	#	data_file.close()
-
-	#	print(orig)
-	#	print(remov)
 
 def get_options():
 	opt_parser = optparse.OptionParser()
