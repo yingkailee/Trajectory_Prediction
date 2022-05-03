@@ -142,9 +142,6 @@ def parse_arguments() -> Any:
     parser.add_argument("--mlp",
                         action="store_true",
                         help="Use MLP instead of LSTM")
-    parser.add_argument("--use_intersection",
-                        action="store_true",
-                        help="Use the intersection information")
     return parser.parse_args()
 
 class MLP(nn.Module):
@@ -269,8 +266,6 @@ def train(train_loader: Any, epoch: int, criterion: Any, encoder: Any, decoder: 
         # Zero the gradients
         encoder_optimizer.zero_grad()
         decoder_optimizer.zero_grad()
-        if args.use_intersection:
-            _input = _input[:, :-1, :]
 
         # Encoder
         batch_size = _input.shape[0]
