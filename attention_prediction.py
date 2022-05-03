@@ -1,6 +1,10 @@
 import os
 import shutil
 import tempfile
+
+import pandas as pd
+import matplotlib.pyplot as plt
+import scipy.stats as stats
 import time
 from typing import Any, Dict, List, Tuple, Union
 import pickle
@@ -9,15 +13,30 @@ import joblib
 from joblib import Parallel, delayed
 import numpy as np
 import pickle as pkl
-
+from termcolor import cprint
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+import math
+from shapely.geometry import Point, Polygon, LineString, LinearRing
+from shapely.affinity import affine_transform, rotate
+from random import random, randint
+
+from lstm_utils import ModelUtils, LSTMDataset
+
+from process_data import DataProcessor
 
 device = torch.device("cpu")
 global_step = 0
 best_loss = float("inf")
 np.random.seed(100)
+_OBS_DURATION_TIMESTEPS = 20
+tail_loss = 100
+val_tail_loss = 100
+
+global train_single, train_multiple, val_single, val_multiple, norm_value
+
 
 def parse_arguments() -> Any:
     """Arguments for running the baseline.
@@ -96,7 +115,7 @@ def parse_arguments() -> Any:
                         help="Val batch size")
     parser.add_argument("--end_epoch",
                         type=int,
-                        default=5000,
+                        default=200,
                         help="Last epoch")
     parser.add_argument("--lr",
                         type=float,
@@ -109,197 +128,221 @@ def parse_arguments() -> Any:
         help=
         "path to the pickle file where forecasted trajectories will be saved.",
     )
+    parser.add_argument(
+        "--model_name",
+        required=False,
+        type=str,
+        help=
+        "name of the model to be saved.",
+    )
     parser.add_argument("--gpu",
                         type=int,
                         default=-1,
                         help="GPU to use")
+    parser.add_argument("--mlp",
+                        action="store_true",
+                        help="Use MLP instead of LSTM")
+    parser.add_argument("--use_intersection",
+                        action="store_true",
+                        help="Use the intersection information")
     return parser.parse_args()
 
-class LSTMDataset(Dataset):
-    def __init__(self, data_dict: Dict[str, Any], args: Any, mode: str):
-        pass
-
-    def __len__(self):
-        pass
-        #return self.data_size
-
-    def __getitem__(self, idx: int):
-        pass
-
-def save_checkpoint(save_dir: str, state: Dict[str, Any]) -> None:
-    filename = "{}/LSTM.pth.tar".format(save_dir)
-    torch.save(state, filename)
-
-def load_checkpoint(checkpoint_file: str, model: Any, optimizer: Any) -> Tuple[int, float]:
-    if os.path.isfile(checkpoint_file):
-        print("=> loading checkpoint '{}'".format(checkpoint_file))
-        checkpoint = torch.load(checkpoint_file)
-        epoch = checkpoint["epoch"]
-        best_loss = checkpoint["best_loss"]
-        model.load_state_dict(checkpoint["model_state_dict"])
-        optimizer.load_state_dict(checkpoint["optimizer"])
-        print(
-            f"=> loaded checkpoint {checkpoint_file} (epoch: {epoch}, loss: {best_loss})"
-        )
-    else:
-        print(f"=> no checkpoint found at {checkpoint_file}")
-
-    return epoch, best_loss
-
-def my_collate_fn(batch: List[Any]) -> List[Any]:
-    _input, output, helpers = [], [], []
-    for item in batch:
-        _input.append(item[0])
-        output.append(item[1])
-        helpers.append(item[2])
-    _input = torch.stack(_input)
-    output = torch.stack(output)
-    return [_input, output, helpers]
-
-def init_hidden(batch_size: int, hidden_size: int, device: Any) -> Tuple[Any, Any]:
-    return (torch.zeros(batch_size, hidden_size).to(device), torch.zeros(batch_size, hidden_size).to(device),)
-
-class AttentionPredictor(nn.Module):
+class MLP(nn.Module):
     def __init__(self,
-                 input_size: int = 2,
-                 embedding_size: int = 8,
-                 hidden_size: int = 16):
+                 input_len: int = 20,
+                 output_len: int = 30):
+        super(MLP, self).__init__()
+        self.linear1 = nn.Linear(2 * input_len, 500, bias=True)
+        print(input_len)
+        print(self.linear1)
+        self.linear2 = nn.Linear(500, 200, bias=True)
+        self.output_len = output_len
+        self.linear3 = nn.Linear(200, 1, bias=True)
 
-        super(AttentionPredictor, self).__init__()
-        self.hidden_size = hidden_size
+    def forward(self, x):
+        x = F.relu(self.linear1(x))
+        x = F.relu(self.linear2(x))
+        return self.linear3(x)
 
-        # Encoder #1:
-        self.linear1 = nn.Linear(input_size, embedding_size)
-        self.lstm1 = nn.LSTMCell(embedding_size, hidden_size)
-
-        # Encoder #2:
-        self.linear2 = nn.Linear(input_size, embedding_size)
-        self.lstm2 = nn.LSTMCell(embedding_size, hidden_size)
-
-        # Predictor:
-        self.linear3 = nn.Linear(2*hidden_size, embedding_size)
-        self.linear4 = nn.Linear(embedding_size, 1)
-
-    def forward(self, x1: torch.FloatTensor, x2: torch.FloatTensor) -> Any:
-
-        # Get description of movement of car 1:
-        batch_size = x1.shape[0]
-        input_length = x1.shape[1]
-        hidden1 = init_hidden(batch_size, self.hidden_size, device)
-
-        for ei in range(input_length):
-            input1 = x1[:, ei, :]
-            embedded1 = F.relu(self.linear1(input1))
-            hidden1 = self.lstm1(embedded1, hidden1)
-
-        # Get description of movement of car 2:
-        batch_size = x2.shape[0]
-        input_length = x2.shape[1]
-        hidden2 = init_hidden(batch_size, self.hidden_size, device)
-        for ei in range(input_length):
-            input2 = x2[:, ei, :]
-            embedded2 = F.relu(self.linear2(input2))
-            hidden2 = self.lstm2(embedded2, hidden2)
-
-        # Predict the impact:
-        x = torch.cat((hidden1[0], hidden2[0]), dim=0)
-        print(x.size())
-        x = F.relu(self.linear3(x))
-        x = F.relu(self.linear4(x))
-        return x
-
-def train(
-        train_loader: Any,
-        criterion: Any,
-        model: Any,
-        optimizer: Any
-) -> None:
-    args = parse_arguments()
+def train_mlp(train_loader: Any, epoch: int, criterion: Any, model: Any, optimizer: Any) -> None:
     global global_step
-    for i, (_input1, _input2, target) in enumerate(train_loader):
-        _input1, _input2 = _input1.to(device), _input2.to(device)
+
+    args = parse_arguments()
+    start = time.time()
+    total_loss = 0
+    total_num = 0
+    for i, (_input, target) in enumerate(train_loader):
+        start = time.time()
+        _input = _input.to(device)
+        #target = target.type(torch.LongTensor)
         target = target.to(device)
         # Set to train mode
         model.train()
         # Zero the gradients
         optimizer.zero_grad()
-        predictions = model(_input1, _input2)
-        loss = criterion(predictions, target)
+        # Encoder
+        batch_size = _input.shape[0]
+        input_length = _input.shape[1]
+        input_shape = _input.shape[2]
+
+        decoder_outputs = model(_input.view(batch_size, -1))
+        loss = criterion(decoder_outputs, target)
         # Backpropagate
+        loss = loss.mean()
         loss.backward()
         optimizer.step()
         global_step += 1
+        total_loss += loss.item()
+        total_num += batch_size
+    print("Train predictor performance:")
+    print("Average loss:", total_loss/total_num)
 
-
-def validate(
-        val_loader: Any,
-        epoch: int,
-        criterion: Any,
-        model: Any,
-        optimizer: Any
-) -> float:
+def test_mlp(test_loader: Any,  model: Any, optimizer: Any, epoch: Any):
+    global global_step, tail_loss
     args = parse_arguments()
-    total_loss = []
-    global global_step
-    for i, (_input1, _input2, target) in enumerate(val_loader):
-        _input1, _input2 = _input1.to(device), _input2.to(device)
+    total_loss = 0
+    total_num = 0
+    for i, (_input, target) in enumerate(test_loader):
+        _input = _input.to(device)
+
         target = target.to(device)
         # Set to train mode
         model.eval()
         # Zero the gradients
         optimizer.zero_grad()
-        predictions = model(_input1, _input2)
-        loss = criterion(predictions, target)
+        # Encoder
+        batch_size = _input.shape[0]
+        decoder_outputs = model(_input.view(batch_size, -1))
+        loss = criterion(decoder_outputs, target).mean()
+        total_loss += loss.item()
+        total_num += batch_size
+    print("\nTest predictor performance:")
+    print("Average loss:", total_loss / total_num)
 
-        total_loss.append(loss.item())
+class EncoderRNN(nn.Module):
+    """Encoder Network."""
+    def __init__(self,
+                 input_size: int = 2,
+                 embedding_size: int = 8,
+                 hidden_size: int = 16):
+        super(EncoderRNN, self).__init__()
+        self.hidden_size = hidden_size
 
-    # Save
-    val_loss = sum(total_loss) / len(total_loss)
+        self.linear1 = nn.Linear(input_size, embedding_size)
+        self.lstm1 = nn.LSTMCell(embedding_size, hidden_size)
 
-    if val_loss <= best_loss:
-        print("Saving the model.", val_loss)
-        best_loss = val_loss
-        save_dir = "saved_models/lstm"
-        os.makedirs(save_dir, exist_ok=True)
-        save_checkpoint(
-            save_dir,
-            {
-                "epoch": epoch + 1,
-                "model_state_dict": model.state_dict(),
-                "best_loss": val_loss,
-                "optimizer": optimizer.state_dict()
-            },
-        )
-    return val_loss
+    def forward(self, x: torch.FloatTensor, hidden: Any) -> Any:
+        embedded = F.relu(self.linear1(x))
+        hidden = self.lstm1(embedded, hidden)
+        return hidden
 
+class DecoderRNN(nn.Module):
+    """Decoder Network."""
+    def __init__(self, embedding_size=8, hidden_size=16, output_size=2):
+        super(DecoderRNN, self).__init__()
+        self.hidden_size = hidden_size
 
-def test(
-        test_loader: Any,
-        model: Any,
-        optimizer: Any,
-) -> Any:
-    args = parse_arguments()
-    total_loss = []
+        self.linear1 = nn.Linear(output_size, embedding_size)
+        self.lstm1 = nn.LSTMCell(embedding_size, hidden_size)
+        self.linear2 = nn.Linear(hidden_size, 1)
+
+    def forward(self, x, hidden):
+        embedded = F.relu(self.linear1(x))
+        hidden = self.lstm1(embedded, hidden)
+        output = self.linear2(hidden[0])
+        return output, hidden
+
+def train(train_loader: Any, epoch: int, criterion: Any, encoder: Any, decoder: Any, encoder_optimizer: Any, decoder_optimizer: Any, model_utils: ModelUtils) -> None:
+
     global global_step
-    all_predictions = []
-    for i, (_input1, _input2, target) in enumerate(test_loader):
-        _input1, _input2 = _input1.to(device), _input2.to(device)
+    total_loss = 0
+    total_num = 0
+    for i, (_input, target) in enumerate(train_loader):
+
+        _input = _input.to(device)
         target = target.to(device)
+
         # Set to train mode
-        model.eval()
+        encoder.train()
+        decoder.train()
+
         # Zero the gradients
-        optimizer.zero_grad()
-        predictions = model(_input1, _input2)
-        all_predictions.append(predictions)
+        encoder_optimizer.zero_grad()
+        decoder_optimizer.zero_grad()
+        if args.use_intersection:
+            _input = _input[:, :-1, :]
 
-    all_predictions = torch.stack(all_predictions)
-    all_predictions = all_predictions.detach().cpu().numpy()
+        # Encoder
+        batch_size = _input.shape[0]
+        input_length = _input.shape[1]
+        input_shape = _input.shape[2]
 
-    return all_predictions
+        # Initialize encoder hidden state
+        encoder_hidden = model_utils.init_hidden(
+            batch_size, encoder.hidden_size, device)
+
+        # Encode observed trajectory
+        for ei in range(input_length):
+            encoder_input = _input[:, ei, :]
+            encoder_hidden = encoder(encoder_input, encoder_hidden)
+
+        # Initialize decoder input with last coordinate in encoder
+        decoder_input = encoder_input[:, :2]
+        # Initialize decoder hidden state as encoder hidden state
+        decoder_hidden = encoder_hidden
+        decoder_outputs, decoder_hidden = decoder(decoder_input, decoder_hidden)
+
+        loss = criterion(decoder_outputs, target)
+        # Backpropagate
+        loss = loss.mean()
+        loss.backward()
+        encoder_optimizer.step()
+        decoder_optimizer.step()
+        global_step += 1
+        total_loss += loss.item()
+        total_num += batch_size
+    print("Train predictor performance:")
+    print("Average loss:", total_loss / total_num)
+    global_step += 1
+
+def test(loader: Any, epoch: int, criterion: Any, encoder: Any, decoder: Any, encoder_optimizer: Any, decoder_optimizer: Any, model_utils: ModelUtils):
+    global best_loss
+    args = parse_arguments()
+    total_loss = 0
+    total_num = 0
+    for i, (_input, target) in enumerate(loader):
+        _input = _input.to(device)
+        target = target.to(device)
+        # Set to eval mode
+        encoder.eval()
+        decoder.eval()
+
+        # Encoder
+        batch_size = _input.shape[0]
+        input_length = _input.shape[1]
+        input_shape = _input.shape[2]
+        # Initialize encoder hidden state
+        encoder_hidden = model_utils.init_hidden(
+            batch_size, encoder.hidden_size, device)
+
+        # Encode observed trajectory
+        for ei in range(input_length):
+            encoder_input = _input[:, ei, :]
+            encoder_hidden = encoder(encoder_input, encoder_hidden)
+        # Initialize decoder input with last coordinate in encoder
+        decoder_input = encoder_input[:, :2]
+        # Initialize decoder hidden state as encoder hidden state
+        decoder_hidden = encoder_hidden
+        decoder_outputs, decoder_hidden = decoder(decoder_input, decoder_hidden)
+        loss = criterion(decoder_outputs, target).mean()
+        total_loss += loss.item()
+        total_num += batch_size
+    print("Test predictor performance:")
+    print("Average loss:", total_loss / total_num)
 
 def main():
     """Main."""
-    global best_loss
+    global device, train_single, train_multiple, val_single, val_multiple, norm_value
     args = parse_arguments()
 
     if args.gpu >= 0:
@@ -307,29 +350,50 @@ def main():
     else:
         device = torch.device("cpu")
     print(device)
+    print(f"Using all ({joblib.cpu_count()}) CPUs....")
+    model_utils = ModelUtils()
 
-    # get data here:
-    data_dict = None
+
+    # Get data
+    # TO DO: Iterate through multiple pickle files while aggregating information. Balance the data.
+    data_dict = read_file("./data/data1.pkl", show=False)
+
+    data_in = np.asarray(data_dict[:, 0])
+    data_out = np.asarray(data_dict[:, 1])
 
     # Get model
     criterion = nn.MSELoss()
-    model = AttentionPredictor()
-    model.to(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 
+    if not args.mlp:
+        encoder = EncoderRNN()
+        decoder = DecoderRNN(output_size=1)
+
+        encoder.to(device)
+        decoder.to(device)
+
+        encoder_optimizer = torch.optim.Adam(encoder.parameters(), lr=args.lr)
+        decoder_optimizer = torch.optim.Adam(decoder.parameters(), lr=args.lr)
+        encoder_scheduler = torch.optim.lr_scheduler.StepLR(encoder_optimizer, step_size=50, gamma=0.1)
+        decoder_scheduler = torch.optim.lr_scheduler.StepLR(decoder_optimizer, step_size=50, gamma=0.1)
+    else:
+        model = MLP(input_len=20)
+        model.to(device)
+        optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=50, gamma=0.1)
 
     # If model_path provided, resume from saved checkpoint
     if args.model_path is not None and os.path.isfile(args.model_path):
-        epoch, _ = load_checkpoint(args.model_path, model,optimizer)
+        epoch, _ = model_utils.load_checkpoint(
+            args.model_path, encoder, decoder, encoder_optimizer,
+            decoder_optimizer, use_cuda=False)
         start_epoch = epoch + 1
     else:
         start_epoch = 0
 
     if not args.test:
-
         # Get PyTorch Dataset
-        train_dataset = LSTMDataset(data_dict, args, "train")
-        val_dataset = LSTMDataset(data_dict, args, "val")
+        train_dataset = LSTMDataset(data_in, data_out)
+        val_dataset = LSTMDataset(data_in, data_out)    # modify to have separate train/test splits
 
 
         # Setting Dataloaders
@@ -338,19 +402,18 @@ def main():
             batch_size=args.train_batch_size,
             shuffle=True,
             drop_last=False,
-            collate_fn=my_collate_fn,
+            collate_fn=model_utils.my_collate_fn,
         )
+
         val_loader = torch.utils.data.DataLoader(
             val_dataset,
             batch_size=args.val_batch_size,
             drop_last=False,
             shuffle=False,
-            collate_fn=my_collate_fn,
+            collate_fn=model_utils.my_collate_fn,
         )
 
         print("Training begins ...")
-
-        decrement_counter = 0
 
         epoch = start_epoch
         global_start_time = time.time()
@@ -359,43 +422,49 @@ def main():
         prev_loss = best_loss
         while epoch < args.end_epoch:
             start = time.time()
-            train(
-                train_loader,
-                criterion,
-                model,
-                optimizer
-            )
+            if args.mlp:
+                train_mlp(train_loader, epoch, criterion, model, optimizer)
+            else:
+                train(
+                    train_loader,
+                    epoch,
+                    criterion,
+                    encoder,
+                    decoder,
+                    encoder_optimizer,
+                    decoder_optimizer,
+                    model_utils,
+                )
             end = time.time()
 
             print(
-                f"Training epoch completed in {(end - start) / 60.0} mins, Total time: {(end - global_start_time) / 60.0} mins"
+                f"Training epoch {epoch} completed in {round((end - start) / 60.0, 2)} mins, Total time: {round((end - global_start_time) / 60.0, 2)} mins"
             )
 
             epoch += 1
             if epoch % 5 == 0:
                 start = time.time()
-                prev_loss, decrement_counter = validate(
-                    val_loader,
-                    epoch,
-                    criterion,
+                if args.mlp:
+                    test_mlp(val_loader, model, optimizer, epoch)
 
-                    model,
-                    optimizer
-                )
+                else:
+
+                    test(val_loader, epoch, criterion, encoder, decoder, encoder_optimizer,
+                        decoder_optimizer, model_utils)
+
                 end = time.time()
                 print(
-                    f"Validation completed in {(end - start) / 60.0} mins, Total time: {(end - global_start_time) / 60.0} mins"
+                    f"Validation completed in {round((end - start) / 60.0, 2)} mins, Total time: {round((end - global_start_time) / 60.0, 2)} mins"
                 )
-
-
+            if args.mlp:
+                scheduler.step()
+            else:
+                encoder_scheduler.step()
+                decoder_scheduler.step()
     else:
-        # Testing here
         pass
 
-
-
 if __name__ == "__main__":
+    args = parse_arguments()
     main()
-
-
 
