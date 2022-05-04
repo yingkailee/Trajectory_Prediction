@@ -1,4 +1,5 @@
 1. Download [SUMO](https://www.eclipse.org/sumo/)
+Remaining instructions are only necessary to run simulations without a script.
 2. A network file can be created through the installed netedit application or OpenStreetMap.
 3. For OpenStreetMap, export an area to create a .osm file which can be converted to a network file through
 ```shell
