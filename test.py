@@ -30,35 +30,32 @@ def run(mode, removal_time = 300, random_vehicle_ID = 0):
 	step = 0
 	vehicle_pos = {}
 	snapshot = []
-	first_vehicle = 'a'
+	first_vehicle = ''
 
 	#while traci.simulation.getMinExpectedNumber() > 0:
 	while step <= 1000:
 		step += 1
 		traci.simulationStep()
 
-		if (step % 1) == 0:
-			vehicleID = traci.vehicle.getIDList()
-			if len(vehicleID) > 0 and first_vehicle == 'a':
-				first_vehicle = vehicleID[0]
-			if len(vehicleID) > 0 and first_vehicle != 'a' and vehicleID[0] != first_vehicle and len(snapshot) == 0:
-				snapshot = vehicleID
+		vehicleID = traci.vehicle.getIDList()
+		if len(vehicleID) > 0 and first_vehicle == '':
+			first_vehicle = vehicleID[0]
+		if len(vehicleID) > 0 and first_vehicle != '' and vehicleID[0] != first_vehicle and len(snapshot) == 0:
+			snapshot = vehicleID
 
-			for veh_id in vehicleID:
-				if veh_id in vehicle_pos:
-					vehicle_pos[veh_id].append([step, traci.vehicle.getPosition(veh_id)])
-				else: 
-					vehicle_pos[veh_id] = [[step, traci.vehicle.getPosition(veh_id)]]
+		for veh_id in vehicleID:
+			if veh_id in vehicle_pos:
+				vehicle_pos[veh_id].append([step, traci.vehicle.getPosition(veh_id)])
+			else: 
+				vehicle_pos[veh_id] = [[step, traci.vehicle.getPosition(veh_id)]]
 
 		if mode == 1:
 			if step == removal_time:
 				snapshot = vehicleID
 				random_vehicle_ID = random.choice(vehicleID)
 				traci.vehicle.remove(random_vehicle_ID)
-				sys.stdout.flush()
 
 	traci.close()
-	sys.stdout.flush()
 
 	return vehicle_pos, random_vehicle_ID, snapshot
 
@@ -98,6 +95,12 @@ def ADE(traj1, traj2):
 		return 0.0
 	return sum_disp / count
 
+# initialize array of size 1000, loop through and increment using car timesteps
+# get max (prune the too short car frames)
+# split into multiple pickle files
+# 50 simulations per pickle file
+# name them data1.pkl, data2.pkl, data3.pkl, etc
+
 def main():
 	sims = 2
 	times_removal = 2
@@ -111,8 +114,8 @@ def main():
 	dict_veh = []
 
 	for i in range(sims):
-		commandy = 'randomTrips.py' + network + route + end + ' --random'
-		os.system(commandy)
+		command = 'randomTrips.py' + network + route + end + ' --random'
+		os.system(command)
 		original_sim = {}
 		removed_sim = {}
 		removal_time = 300
@@ -127,7 +130,6 @@ def main():
 				run_result = run(0)
 				original_sim = run_result[0]
 				snapshot = run_result[2]
-				print(snapshot)
 				ind = 0
 
 				dict_veh.clear()
@@ -138,16 +140,14 @@ def main():
 					ind += 1
 				pickle.dump(original_sim, data_file)
 				first_vehicle = snapshot[0]
-				if len(snapshot) < 3:
-					print('simulation failure, try again')
-					return
+
 				first_vehicle_end_step = original_sim[first_vehicle][len(original_sim[first_vehicle]) - 1][0]
 				removal_time = first_vehicle_end_step
 
 			else:
 				if first_vehicle_end_step < 750:
 					removal_time = random.randint(first_vehicle_end_step, first_vehicle_end_step + 200)
-				#dict_veh = snapshot
+
 				run_result = run(1, removal_time)
 				removed_sim = run_result[0]
 				removed_veh = run_result[1]
