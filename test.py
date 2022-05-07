@@ -1,7 +1,6 @@
 import os
 import sys
 import random
-import optparse
 import pickle
 import copy
 import math
@@ -9,28 +8,11 @@ import math
 from sumolib import checkBinary
 import traci
 
-def remove_dict_val(d):
-	for key in d:
-		i = len(d[key]) - 1
-		while i >= 0:
-			if d[key][i][0] < 70:
-				del d[key][i]    
-			i = i - 1
-
-	keys = list(d)
-	for i in range(len(d)):
-		if len(d[keys[i]]) == 0:
-			del d[keys[i]]
-
-def append_files(data_file, file1):
-	file = open(file1, 'rb')
-	pickle.dump(pickle.load(file), data_file)
-
-def run(mode, removal_time = 300, random_vehicle_ID = 0):
+def run(mode, removal_time = 0):
 	step = 0
 	vehicle_pos = {}
-	snapshot = []
-	first_vehicle = ''
+	removed_veh = ''
+	timestep_vehs = []
 
 	#while traci.simulation.getMinExpectedNumber() > 0:
 	while step <= 1000:
@@ -38,10 +20,6 @@ def run(mode, removal_time = 300, random_vehicle_ID = 0):
 		traci.simulationStep()
 
 		vehicleID = traci.vehicle.getIDList()
-		if len(vehicleID) > 0 and first_vehicle == '':
-			first_vehicle = vehicleID[0]
-		if len(vehicleID) > 0 and first_vehicle != '' and vehicleID[0] != first_vehicle and len(snapshot) == 0:
-			snapshot = vehicleID
 
 		for veh_id in vehicleID:
 			if veh_id in vehicle_pos:
@@ -51,15 +29,14 @@ def run(mode, removal_time = 300, random_vehicle_ID = 0):
 
 		if mode == 1:
 			if step == removal_time:
-				snapshot = vehicleID
-				random_vehicle_ID = random.choice(vehicleID)
-				traci.vehicle.remove(random_vehicle_ID)
-
+				removed_veh = random.choice(vehicleID)
+				timestep_vehs = vehicleID
+				traci.vehicle.remove(removed_veh)
 	traci.close()
 
-	return vehicle_pos, random_vehicle_ID, snapshot
+	return vehicle_pos, removed_veh, timestep_vehs
 
-
+# given two trajectories starting at same time, calculate ADE up to 20 timesteps
 def ADE(traj1, traj2):
 	count = 0
 	sum_disp = 0.0
@@ -90,68 +67,70 @@ def ADE(traj1, traj2):
 		if count == 20:
 			break
 
-
 	if(count == 0):
 		return 0.0
 	return sum_disp / count
 
-# initialize array of size 1000, loop through and increment using car timesteps
-# get max (prune the too short car frames)
-# split into multiple pickle files
-# 50 simulations per pickle file
-# name them data1.pkl, data2.pkl, data3.pkl, etc
+# try using get_data.py
 
-def main():
+# code ideas - create separate run() for removal and no removal
+# change looping logic in main() too
+
+def main(pickle_num = 1):
 	sims = 2
 	times_removal = 2
 
 	network = ' -n first.net.xml'
 	route = ' -r first.rou.xml'
-	end = '' #' -e ' + ' ';
+	end = ' -e 1000';
 
-	data_file = open('pickle.pkl','wb')
-
-	dict_veh = []
+	pickle_name = 'sims' + str(pickle_num) + '.pkl'
+	data_file = open(pickle_name,'wb')
 
 	for i in range(sims):
-		command = 'randomTrips.py' + network + route + end + ' --random'
-		os.system(command)
 		original_sim = {}
 		removed_sim = {}
-		removal_time = 300
-		snapshot = []
 		removal_veh = 0
-		first_end_step = 0
 
-		for j in range(times_removal + 1):
+		j = 0
+		while j <= times_removal:
+			if j == 0:
+				command = 'randomTrips.py' + network + route + end + ' --random'
+				print(command)
+				os.system(command)
+
 			traci.start([sumoBinary, "-c", "first.sumocfg", "--tripinfo-output", "tripinfo.xml"])
 
 			if j == 0:
 				run_result = run(0)
 				original_sim = run_result[0]
-				snapshot = run_result[2]
-				ind = 0
-
-				dict_veh.clear()
-				for v in snapshot:
-					path = original_sim[snapshot[ind]]
-					if(path[0][0] < removal_time - 20 and path[len(path)-1][0] > removal_time + 20):
-						dict_veh.append(snapshot[ind])
-					ind += 1
+					
 				pickle.dump(original_sim, data_file)
-				first_vehicle = snapshot[0]
 
-				first_vehicle_end_step = original_sim[first_vehicle][len(original_sim[first_vehicle]) - 1][0]
-				removal_time = first_vehicle_end_step
+				timestep_counters = [0] * 1002
 
+				for traj in original_sim.values():
+					for time_loc in traj:
+						timestep_counters[time_loc[0]] += 1
+
+				max = 0
+				max_ind = 0
+				ind = 0
+				while ind < 1001:
+					if timestep_counters[ind] > max:
+						max = timestep_counters[ind]
+						max_ind = ind
+					ind += 1
 			else:
-				if first_vehicle_end_step < 750:
-					removal_time = random.randint(first_vehicle_end_step, first_vehicle_end_step + 200)
+				if max_ind < 950:
+					removal_time = max_ind
+				else:
+					removal_time = 950
 
 				run_result = run(1, removal_time)
 				removed_sim = run_result[0]
 				removed_veh = run_result[1]
-				snapshot = run_result[2]
+				timestep_vehs = run_result[2]
 
 				uncopy_sim1 = copy.deepcopy(original_sim)
 				for key in uncopy_sim1:
@@ -168,25 +147,22 @@ def main():
 						if uncopy_sim2[key][i][0] < removal_time:
 							del uncopy_sim2[key][i]  
 						i = i - 1
-				dict_veh = []
-				for i in snapshot:
-					dict_veh.append(i)
-				veh_ADE = []
-				for veh in dict_veh:
-					new_ADE = ADE(uncopy_sim1[veh], uncopy_sim2[veh])
-					veh_ADE.append(new_ADE)
 
-				removals = [removal_time, removed_veh, dict_veh, veh_ADE]
+				# possibly purge cars in timestep_vehs that don't last for 20 timesteps after removal_time
+				timestep_vehs_arr = []
+				for veh in timestep_vehs:
+					timestep_vehs_arr.append(veh)
+
+				veh_ADE = []
+				for veh in timestep_vehs_arr:
+					veh_ADE.append(ADE(uncopy_sim1[veh], uncopy_sim2[veh]))
+
+				removals = [removal_time, removed_veh, timestep_vehs_arr, veh_ADE]
 				pickle.dump(removals, data_file)
 
-	data_file.close()
+			j += 1
 
-def get_options():
-	opt_parser = optparse.OptionParser()
-	opt_parser.add_option("--nogui", action="store_true",
-						 default=True, help="run the commandline version of sumo")
-	options, args = opt_parser.parse_args()
-	return options
+	data_file.close()
 
 if 'SUMO_HOME' in os.environ:
 	tools = os.path.join(os.environ['SUMO_HOME'], 'tools')
@@ -195,10 +171,9 @@ else:
 	sys.exit("please declare environment variable 'SUMO_HOME'")
 
 if __name__ == "__main__":
-	options = get_options()
-	if options.nogui:
-		sumoBinary = checkBinary('sumo')
-	else:
-		sumoBinary = checkBinary('sumo-gui')
+	sumoBinary = checkBinary('sumo')
 
-	main()
+	pickle_count = 2
+
+	for pickle_num in range(pickle_count):
+		main(pickle_num)
