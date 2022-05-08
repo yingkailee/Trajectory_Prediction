@@ -77,7 +77,7 @@ def ADE(traj1, traj2):
 # change looping logic in main() too
 
 def main(pickle_num = 1):
-	sims = 2
+	sims = 50
 	times_removal = 2
 
 	network = ' -n first.net.xml'
@@ -127,6 +127,8 @@ def main(pickle_num = 1):
 				else:
 					removal_time = 950
 
+				removal_time = random.randint(removal_time - 10, removal_time + 10)
+
 				run_result = run(1, removal_time)
 				removed_sim = run_result[0]
 				removed_veh = run_result[1]
@@ -173,7 +175,7 @@ else:
 if __name__ == "__main__":
 	sumoBinary = checkBinary('sumo')
 
-	pickle_count = 2
+	pickle_count = 3
 
 	for pickle_num in range(pickle_count):
 		main(pickle_num)
