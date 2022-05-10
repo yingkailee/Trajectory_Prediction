@@ -27,6 +27,8 @@ from lstm_utils import ModelUtils, LSTMDataset
 
 from process_data import DataProcessor
 
+from get_data import read_file
+
 device = torch.device("cpu")
 global_step = 0
 best_loss = float("inf")
@@ -340,7 +342,7 @@ def main():
     global device, train_single, train_multiple, val_single, val_multiple, norm_value
     args = parse_arguments()
 
-    if args.gpu >= 0:
+    if args.gpu > 0:
         device = torch.device("cuda:{}".format(args.gpu))
     else:
         device = torch.device("cpu")
@@ -351,7 +353,13 @@ def main():
 
     # Get data
     # TO DO: Iterate through multiple pickle files while aggregating information. Balance the data.
-    data_dict = read_file("./data/data1.pkl", show=False)
+    data_dict = read_file("./data/sims0.pkl", show=False)
+
+    # Problem: the slicing below does not work as get_data returns list - workaround
+    data_dict = np.array(data_dict)
+
+    np.vstack((data_dict, np.array(read_file("./data/sims1.pkl"))))
+    np.vstack((data_dict, np.array(read_file("./data/sims2.pkl"))))
 
     data_in = np.asarray(data_dict[:, 0])
     data_out = np.asarray(data_dict[:, 1])

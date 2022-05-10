@@ -67,4 +67,6 @@ def read_file(filename, show=False):
     return data
 
 if __name__=="__main__":
-    data = read_file("./data/data1.pkl", show=True)
+    data = read_file("./data/sims0.pkl", show=False)
+
+    print(data)
