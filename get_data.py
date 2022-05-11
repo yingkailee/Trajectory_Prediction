@@ -9,6 +9,7 @@ def read_file(filename, show=False):
     n_removed = 2
     count = 0
     data = []
+    labels = []
     trajectories = None
     removed_info = []
     hist_len = 20
@@ -49,7 +50,8 @@ def read_file(filename, show=False):
                             x = np.asarray([m[i][0] for i in range(len(m))])
                             y = np.asarray([m[i][1] for i in range(len(m))])
                             carB = np.transpose(np.vstack((x, y)))
-                            data.append([carA-carB, ades[j]])
+                            data.append(carA-carB)
+                            labels.append(ades[j])
                             if show:
                                 plt.scatter(x, y, c='r')
                                 plt.show()
@@ -64,9 +66,7 @@ def read_file(filename, show=False):
                 count+=1
         except EOFError:
             break
-    return data
+    return np.asarray(data), np.asarray(labels)
 
 if __name__=="__main__":
-    data = read_file("./data/sims0.pkl", show=False)
-
-    print(data)
+    data = read_file("./data/data1.pkl", show=True)

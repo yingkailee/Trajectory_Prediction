@@ -1,3 +1,4 @@
+import glob
 import os
 import shutil
 import tempfile
@@ -24,8 +25,6 @@ from shapely.affinity import affine_transform, rotate
 from random import random, randint
 
 from lstm_utils import ModelUtils, LSTMDataset
-
-from process_data import DataProcessor
 
 from get_data import read_file
 
@@ -196,7 +195,7 @@ def train_mlp(train_loader: Any, epoch: int, criterion: Any, model: Any, optimiz
     print("Train predictor performance:")
     print("Average loss:", total_loss/total_num)
 
-def test_mlp(test_loader: Any,  model: Any, optimizer: Any, epoch: Any):
+def test_mlp(test_loader: Any,  model: Any, optimizer: Any, epoch: Any, criterion: Any):
     global global_step, tail_loss
     args = parse_arguments()
     total_loss = 0
@@ -342,7 +341,7 @@ def main():
     global device, train_single, train_multiple, val_single, val_multiple, norm_value
     args = parse_arguments()
 
-    if args.gpu > 0:
+    if args.gpu >= 0:
         device = torch.device("cuda:{}".format(args.gpu))
     else:
         device = torch.device("cpu")
@@ -352,17 +351,24 @@ def main():
 
 
     # Get data
-    # TO DO: Iterate through multiple pickle files while aggregating information. Balance the data.
-    data_dict = read_file("./data/sims0.pkl", show=False)
+    # Aggregate the data:
+    training_files_dir = "./data/"
+    pickle_list = glob.glob(training_files_dir+"*")
+    data_in = np.empty((0, 20, 2))
+    data_out = np.empty(0)
+    print("All files found:", pickle_list)
+    for pickle_file in pickle_list:
+        print("Reading file:", pickle_file)
+        data, labels = read_file(pickle_file, show=False)
+        data_in = np.vstack((data_in, data))
+        data_out = np.concatenate((data_out, labels))
 
-    # Problem: the slicing below does not work as get_data returns list - workaround
-    data_dict = np.array(data_dict)
-
-    np.vstack((data_dict, np.array(read_file("./data/sims1.pkl"))))
-    np.vstack((data_dict, np.array(read_file("./data/sims2.pkl"))))
-
-    data_in = np.asarray(data_dict[:, 0])
-    data_out = np.asarray(data_dict[:, 1])
+    # Split the data:
+    indices = np.arange(len(data_in))
+    np.random.shuffle(indices)
+    n = int(0.7*len(indices))
+    train_data_in, train_data_out = data_in[:n], data_out[:n]
+    test_data_in, test_data_out = data_in[n:], data_out[n:]
 
     # Get model
     criterion = nn.MSELoss()
@@ -395,8 +401,8 @@ def main():
 
     if not args.test:
         # Get PyTorch Dataset
-        train_dataset = LSTMDataset(data_in, data_out)
-        val_dataset = LSTMDataset(data_in, data_out)    # modify to have separate train/test splits
+        train_dataset = LSTMDataset(train_data_in, train_data_out)
+        val_dataset = LSTMDataset(test_data_in, test_data_out)
 
 
         # Setting Dataloaders
@@ -448,7 +454,7 @@ def main():
             if epoch % 5 == 0:
                 start = time.time()
                 if args.mlp:
-                    test_mlp(val_loader, model, optimizer, epoch)
+                    test_mlp(val_loader, model, optimizer, epoch, criterion)
 
                 else:
 

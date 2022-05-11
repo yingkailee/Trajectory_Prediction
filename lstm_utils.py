@@ -12,16 +12,16 @@ class LSTMDataset(Dataset):
     """PyTorch Dataset for LSTM Baselines."""
     def __init__(self, data_in, data_out):
         # Get input
-        self.input_data = data_in
-        self.output_data = data_out
+        self.input_data = torch.from_numpy(np.array(data_in).astype(np.float32))
+        self.output_data = torch.from_numpy(np.array(data_out).astype(np.float32))
         self.data_size = self.input_data.shape[0]
 
     def __len__(self):
         return self.data_size
 
     def __getitem__(self, idx: int
-                    ) -> Tuple[torch.FloatTensor, Any, Dict[str, np.ndarray]]:
-        return (torch.FloatTensor(self.input_data[idx]),torch.FloatTensor(self.output_data[idx]))
+                    ) -> Tuple[Any, Any]:
+        return (self.input_data[idx],self.output_data[idx])
 
 class ModelUtils:
     """Utils for LSTM baselines."""
@@ -159,3 +159,4 @@ class ModelUtils:
             torch.zeros(batch_size, hidden_size).to(device),
             torch.zeros(batch_size, hidden_size).to(device),
         )
+
