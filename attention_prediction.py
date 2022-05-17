@@ -192,14 +192,16 @@ def train_mlp(train_loader: Any, epoch: int, criterion: Any, model: Any, optimiz
         global_step += 1
         total_loss += loss.item()
         total_num += batch_size
-    print("Train predictor performance:")
-    print("Average loss:", total_loss/total_num)
+    #print("Train predictor performance:")
+    #print("Average loss:", total_loss/total_num)
 
 def test_mlp(test_loader: Any,  model: Any, optimizer: Any, epoch: Any, criterion: Any):
     global global_step, tail_loss
     args = parse_arguments()
     total_loss = 0
     total_num = 0
+    gt = []
+    pred = []
     for i, (_input, target) in enumerate(test_loader):
         _input = _input.to(device)
 
@@ -212,10 +214,16 @@ def test_mlp(test_loader: Any,  model: Any, optimizer: Any, epoch: Any, criterio
         batch_size = _input.shape[0]
         decoder_outputs = model(_input.view(batch_size, -1))
         loss = criterion(decoder_outputs, target).mean()
+        gt.extend(target.detach().cpu().numpy())
+        pred.extend(decoder_outputs.detach().cpu().numpy())
         total_loss += loss.item()
         total_num += batch_size
     print("\nTest predictor performance:")
     print("Average loss:", total_loss / total_num)
+    plt.scatter(gt, pred)
+    plt.xlabel("Ground truth")
+    plt.ylabel("Prediction")
+    plt.show()
 
 class EncoderRNN(nn.Module):
     """Encoder Network."""
@@ -297,8 +305,6 @@ def train(train_loader: Any, epoch: int, criterion: Any, encoder: Any, decoder: 
         global_step += 1
         total_loss += loss.item()
         total_num += batch_size
-    print("Train predictor performance:")
-    print("Average loss:", total_loss / total_num)
     global_step += 1
 
 def test(loader: Any, epoch: int, criterion: Any, encoder: Any, decoder: Any, encoder_optimizer: Any, decoder_optimizer: Any, model_utils: ModelUtils):
@@ -306,6 +312,8 @@ def test(loader: Any, epoch: int, criterion: Any, encoder: Any, decoder: Any, en
     args = parse_arguments()
     total_loss = 0
     total_num = 0
+    gt = []
+    pred = []
     for i, (_input, target) in enumerate(loader):
         _input = _input.to(device)
         target = target.to(device)
@@ -331,10 +339,17 @@ def test(loader: Any, epoch: int, criterion: Any, encoder: Any, decoder: Any, en
         decoder_hidden = encoder_hidden
         decoder_outputs, decoder_hidden = decoder(decoder_input, decoder_hidden)
         loss = criterion(decoder_outputs, target).mean()
+        gt.extend(target.detach().cpu().numpy())
+        pred.extend(decoder_outputs.detach().cpu().numpy())
         total_loss += loss.item()
         total_num += batch_size
     print("Test predictor performance:")
     print("Average loss:", total_loss / total_num)
+
+    plt.scatter(gt, pred)
+    plt.xlabel("Ground truth")
+    plt.ylabel("Prediction")
+    plt.show()
 
 def main():
     """Main."""
@@ -363,6 +378,10 @@ def main():
         data_in = np.vstack((data_in, data))
         data_out = np.concatenate((data_out, labels))
 
+    indices_to_keep = np.argwhere(data_out>= 0.01).ravel()
+    data_in = data_in[indices_to_keep, :]
+    data_out = data_out[indices_to_keep]
+
     # Split the data:
     indices = np.arange(len(data_in))
     np.random.shuffle(indices)
@@ -370,12 +389,14 @@ def main():
     train_data_in, train_data_out = data_in[:n], data_out[:n]
     test_data_in, test_data_out = data_in[n:], data_out[n:]
 
+    print("Data size:", "Training:", len(train_data_in), "Test:", len(test_data_in))
+
     # Get model
     criterion = nn.MSELoss()
 
     if not args.mlp:
         encoder = EncoderRNN()
-        decoder = DecoderRNN(output_size=1)
+        decoder = DecoderRNN(output_size=2)
 
         encoder.to(device)
         decoder.to(device)
@@ -388,7 +409,7 @@ def main():
         model = MLP(input_len=20)
         model.to(device)
         optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
-        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=50, gamma=0.1)
+        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=150, gamma=0.1)
 
     # If model_path provided, resume from saved checkpoint
     if args.model_path is not None and os.path.isfile(args.model_path):
@@ -404,12 +425,17 @@ def main():
         train_dataset = LSTMDataset(train_data_in, train_data_out)
         val_dataset = LSTMDataset(test_data_in, test_data_out)
 
+        epsilon = 0.001
+        train_weights = (train_data_out+epsilon)
+        train_weights /= np.sum(train_weights)
+        train_sampler = torch.utils.data.sampler.WeightedRandomSampler(train_weights, len(train_weights))
 
         # Setting Dataloaders
         train_loader = torch.utils.data.DataLoader(
             train_dataset,
             batch_size=args.train_batch_size,
-            shuffle=True,
+            shuffle=False,
+            sampler = train_sampler,
             drop_last=False,
             collate_fn=model_utils.my_collate_fn,
         )
@@ -446,12 +472,10 @@ def main():
                 )
             end = time.time()
 
-            print(
-                f"Training epoch {epoch} completed in {round((end - start) / 60.0, 2)} mins, Total time: {round((end - global_start_time) / 60.0, 2)} mins"
-            )
+            #print(f"Training epoch {epoch} completed in {round((end - start) / 60.0, 2)} mins, Total time: {round((end - global_start_time) / 60.0, 2)} mins")
 
             epoch += 1
-            if epoch % 5 == 0:
+            if epoch % 50 == 0:
                 start = time.time()
                 if args.mlp:
                     test_mlp(val_loader, model, optimizer, epoch, criterion)
