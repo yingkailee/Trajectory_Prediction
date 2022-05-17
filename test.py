@@ -107,8 +107,8 @@ def main(pickle_num = 1):
 					
 				pickle.dump(original_sim, data_file)
 
+				# approximate removal time around time with most vehicles
 				timestep_counters = [0] * 1002
-
 				for traj in original_sim.values():
 					for time_loc in traj:
 						timestep_counters[time_loc[0]] += 1
@@ -175,7 +175,7 @@ else:
 if __name__ == "__main__":
 	sumoBinary = checkBinary('sumo')
 
-	pickle_count = 3
+	pickle_count = 10
 
 	for pickle_num in range(pickle_count):
 		main(pickle_num)
