@@ -27,6 +27,7 @@ from random import random, randint
 from lstm_utils import ModelUtils, LSTMDataset
 
 from get_data import read_file
+from get_visuals import scan_file, vis_scenarios
 
 device = torch.device("cpu")
 global_step = 0
@@ -184,7 +185,8 @@ def train_mlp(train_loader: Any, epoch: int, criterion: Any, model: Any, optimiz
         input_shape = _input.shape[2]
 
         decoder_outputs = model(_input.view(batch_size, -1))
-        loss = criterion(decoder_outputs, target)
+        #print(decoder_outputs.size(), target.size())
+        loss = criterion(decoder_outputs.view(-1), target)
         # Backpropagate
         loss = loss.mean()
         loss.backward()
@@ -193,7 +195,7 @@ def train_mlp(train_loader: Any, epoch: int, criterion: Any, model: Any, optimiz
         total_loss += loss.item()
         total_num += batch_size
     #print("Train predictor performance:")
-    #print("Average loss:", total_loss/total_num)
+    print("Train loss:", total_loss/total_num)
 
 def test_mlp(test_loader: Any,  model: Any, optimizer: Any, epoch: Any, criterion: Any):
     global global_step, tail_loss
@@ -213,6 +215,7 @@ def test_mlp(test_loader: Any,  model: Any, optimizer: Any, epoch: Any, criterio
         # Encoder
         batch_size = _input.shape[0]
         decoder_outputs = model(_input.view(batch_size, -1))
+        decoder_outputs = decoder_outputs.view(-1)
         loss = criterion(decoder_outputs, target).mean()
         gt.extend(target.detach().cpu().numpy())
         pred.extend(decoder_outputs.detach().cpu().numpy())
@@ -220,10 +223,10 @@ def test_mlp(test_loader: Any,  model: Any, optimizer: Any, epoch: Any, criterio
         total_num += batch_size
     print("\nTest predictor performance:")
     print("Average loss:", total_loss / total_num)
-    plt.scatter(gt, pred)
+    '''plt.scatter(gt, pred)
     plt.xlabel("Ground truth")
     plt.ylabel("Prediction")
-    plt.show()
+    plt.show()'''
 
 class EncoderRNN(nn.Module):
     """Encoder Network."""
@@ -295,7 +298,7 @@ def train(train_loader: Any, epoch: int, criterion: Any, encoder: Any, decoder: 
         # Initialize decoder hidden state as encoder hidden state
         decoder_hidden = encoder_hidden
         decoder_outputs, decoder_hidden = decoder(decoder_input, decoder_hidden)
-
+        decoder_outputs = decoder_outputs.view(-1)
         loss = criterion(decoder_outputs, target)
         # Backpropagate
         loss = loss.mean()
@@ -305,6 +308,7 @@ def train(train_loader: Any, epoch: int, criterion: Any, encoder: Any, decoder: 
         global_step += 1
         total_loss += loss.item()
         total_num += batch_size
+    print("Train loss:", total_loss / total_num)
     global_step += 1
 
 def test(loader: Any, epoch: int, criterion: Any, encoder: Any, decoder: Any, encoder_optimizer: Any, decoder_optimizer: Any, model_utils: ModelUtils):
@@ -338,18 +342,19 @@ def test(loader: Any, epoch: int, criterion: Any, encoder: Any, decoder: Any, en
         # Initialize decoder hidden state as encoder hidden state
         decoder_hidden = encoder_hidden
         decoder_outputs, decoder_hidden = decoder(decoder_input, decoder_hidden)
+        decoder_outputs = decoder_outputs.view(-1)
         loss = criterion(decoder_outputs, target).mean()
         gt.extend(target.detach().cpu().numpy())
         pred.extend(decoder_outputs.detach().cpu().numpy())
         total_loss += loss.item()
         total_num += batch_size
-    print("Test predictor performance:")
+    #print("Test predictor performance:")
     print("Average loss:", total_loss / total_num)
 
-    plt.scatter(gt, pred)
+    '''plt.scatter(gt, pred)
     plt.xlabel("Ground truth")
     plt.ylabel("Prediction")
-    plt.show()
+    plt.show()'''
 
 def main():
     """Main."""
@@ -381,6 +386,7 @@ def main():
     indices_to_keep = np.argwhere(data_out>= 0.01).ravel()
     data_in = data_in[indices_to_keep, :]
     data_out = data_out[indices_to_keep]
+    data_out *= 100
 
     # Split the data:
     indices = np.arange(len(data_in))
@@ -403,13 +409,13 @@ def main():
 
         encoder_optimizer = torch.optim.Adam(encoder.parameters(), lr=args.lr)
         decoder_optimizer = torch.optim.Adam(decoder.parameters(), lr=args.lr)
-        encoder_scheduler = torch.optim.lr_scheduler.StepLR(encoder_optimizer, step_size=50, gamma=0.1)
-        decoder_scheduler = torch.optim.lr_scheduler.StepLR(decoder_optimizer, step_size=50, gamma=0.1)
+        encoder_scheduler = torch.optim.lr_scheduler.StepLR(encoder_optimizer, step_size=750, gamma=0.1)
+        decoder_scheduler = torch.optim.lr_scheduler.StepLR(decoder_optimizer, step_size=750, gamma=0.1)
     else:
         model = MLP(input_len=20)
         model.to(device)
         optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
-        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=150, gamma=0.1)
+        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=250, gamma=0.1)
 
     # If model_path provided, resume from saved checkpoint
     if args.model_path is not None and os.path.isfile(args.model_path):
@@ -427,7 +433,9 @@ def main():
 
         epsilon = 0.001
         train_weights = (train_data_out+epsilon)
+        #train_weights = np.ones_like(train_weights)
         train_weights /= np.sum(train_weights)
+
         train_sampler = torch.utils.data.sampler.WeightedRandomSampler(train_weights, len(train_weights))
 
         # Setting Dataloaders
@@ -494,6 +502,12 @@ def main():
             else:
                 encoder_scheduler.step()
                 decoder_scheduler.step()
+
+        if args.mlp:
+            # run tests for visualizations:
+            for pickle_file in pickle_list:
+                start_times, durations, trajectories = scan_file(pickle_file)
+                vis_scenarios(start_times, durations, trajectories, model, pickle_file.split("/")[-1].split(".")[0][4:])
     else:
         pass
 

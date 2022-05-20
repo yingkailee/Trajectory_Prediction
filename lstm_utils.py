@@ -159,4 +159,3 @@ class ModelUtils:
             torch.zeros(batch_size, hidden_size).to(device),
             torch.zeros(batch_size, hidden_size).to(device),
         )
-

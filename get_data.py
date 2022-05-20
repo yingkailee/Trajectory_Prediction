@@ -50,7 +50,7 @@ def read_file(filename, show=False):
                             x = np.asarray([m[i][0] for i in range(len(m))])
                             y = np.asarray([m[i][1] for i in range(len(m))])
                             carB = np.transpose(np.vstack((x, y)))
-                            data.append(carA-carB)
+                            data.append(carB-carA)
                             labels.append(ades[j])
                             if show:
                                 plt.scatter(x, y, c='r')
@@ -69,4 +69,4 @@ def read_file(filename, show=False):
     return np.asarray(data), np.asarray(labels)
 
 if __name__=="__main__":
-    data = read_file("./data/data1.pkl", show=True)
+    data = read_file("./data/sims1.pkl", show=True)
